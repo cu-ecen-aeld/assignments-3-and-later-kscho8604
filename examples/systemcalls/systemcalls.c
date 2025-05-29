@@ -1,4 +1,11 @@
+#include <stdlib.h>
+#include <syslog.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/wait.h>
 #include "systemcalls.h"
+#include <fcntl.h>
 
 /**
  * @param cmd the command to execute with system()
@@ -15,10 +22,17 @@ bool do_system(const char *cmd)
  *  Call the system() function with the command set in the cmd
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
-*/
-
-    return true;
+*/	
+    int ret;
+    ret = system(cmd);
+    if(ret == 0) {
+	    return true;
+    } else {
+	    syslog(LOG_ERR,"Error call system()\n");
+	    return false;
+    }
 }
+
 
 /**
 * @param count -The numbers of variables passed to the function. The variables are command to execute.
@@ -40,6 +54,9 @@ bool do_exec(int count, ...)
     va_start(args, count);
     char * command[count+1];
     int i;
+    pid_t pid;
+    bool ret = false;
+
     for(i=0; i<count; i++)
     {
         command[i] = va_arg(args, char *);
@@ -47,7 +64,6 @@ bool do_exec(int count, ...)
     command[count] = NULL;
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
 
 /*
  * TODO:
@@ -59,9 +75,30 @@ bool do_exec(int count, ...)
  *
 */
 
+    pid = fork();
+    if(pid < 0) {
+	    syslog(LOG_ERR, "Error fork()\n");
+	    ret = false;
+    } else if(pid == 0) { // child 
+    	if(execv(command[0], &command[0]) == -1) {
+	    printf("*** ERROR: exec failed with return value -1\n"); 
+    	}
+	exit(1);
+    } else {
+	int status;
+	pid_t child_pid = waitpid(pid, &status, 0);
+	printf("Child exited with status %d\n", status);
+	if((status == 0) && (child_pid >= 0)) {
+		ret = true;
+	} else {
+		printf("Command %s return not zero exit code 1\n", command[0]);
+		ret = false;
+	}
+    }
+
     va_end(args);
 
-    return true;
+    return ret;
 }
 
 /**
@@ -75,6 +112,9 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     va_start(args, count);
     char * command[count+1];
     int i;
+    pid_t pid;
+    bool ret = true;
+
     for(i=0; i<count; i++)
     {
         command[i] = va_arg(args, char *);
@@ -84,7 +124,6 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     // and may be removed
     command[count] = command[count];
 
-
 /*
  * TODO
  *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
@@ -93,7 +132,38 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *
 */
 
+    pid = fork();
+    if(pid < 0) {
+	    syslog(LOG_ERR, "Error fork()\n");
+	    va_end(args);
+	    return false; 
+    } else if(pid == 0) { // child 
+	int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+	if(fd == -1) {
+		perror("open failed");
+		exit(1);
+	}
+	
+	dup2(fd, STDOUT_FILENO); 
+	close(fd);
+
+    	if(execv(command[0], &command[0]) == -1) {
+	    printf("*** ERROR: exec failed with return value -1\n"); 
+    	}
+	exit(1);
+    } else {
+	int status;
+	pid_t child_pid = waitpid(pid, &status, 0);
+	printf("Child exited with status %d\n", status);
+	if((status == 0) && (child_pid >= 0)) {
+		ret = true;
+	} else {
+		printf("Command %s return not zero exit code 1\n", command[0]);
+		ret = false;
+	}
+    }
+
     va_end(args);
 
-    return true;
+    return ret;
 }
