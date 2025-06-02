@@ -97,10 +97,13 @@ ${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
 ${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
-cp /home/ubuntu/Coursera/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc/lib/ld-linux-aarch64.so.1 ${OUTDIR}/rootfs/lib
-cp /home/ubuntu/Coursera/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc/lib64/libm.so.6 ${OUTDIR}/rootfs/lib64
-cp /home/ubuntu/Coursera/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc/lib64/libresolv.so.2 ${OUTDIR}/rootfs/lib64
-cp /home/ubuntu/Coursera/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc/lib64/libc.so.6 ${OUTDIR}/rootfs/lib64
+LD_SO=$(aarch64-none-linux-gnu-gcc -print-file-name=ld-linux-aarch64.so.1)
+LIBC=$(aarch64-none-linux-gnu-gcc -print-file-name=libc.so.6)
+LIBM=$(aarch64-none-linux-gnu-gcc -print-file-name=libm.so.6)
+LIBRES=$(aarch64-none-linux-gnu-gcc -print-file-name=libresolv.so.2)
+
+cp -a "$LD_SO" ${OUTDIR}/rootfs/lib
+cp -a "$LIBC" "$LIBM" "$LIBRES" ${OUTDIR}/rootfs/lib64
 
 # TODO: Make device nodes
 sudo mknod -m 666 dev/null c 1 3
