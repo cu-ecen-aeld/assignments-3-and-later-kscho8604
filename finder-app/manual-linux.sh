@@ -39,10 +39,10 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     # TODO: Add your kernel build steps here
     # clean
     echo 'Clean'
-    #make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} mrproper
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} mrproper
     # defconfig
     echo 'defconfig'
-    #make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig
     # build vmlinux
     echo 'build vmlinux'
     make -j4 ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} all
