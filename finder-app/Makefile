@@ -1,6 +1,8 @@
 CC = $(CROSS_COMPILE)gcc 
 CFLAGS = -g
 
+all: writer
+
 writer: writer.o
 
 writer.o: writer.c
