@@ -18,6 +18,10 @@
 #define WBUF_SIZE 1024
 #define PORT 9000
 
+char *readbuffer = NULL;
+bool caught_sigint = false;
+bool caught_sigterm = false;
+
 int mkdir_recursive(const char *path, mode_t mode)
 {
         char tmp[PATH_MAX];
@@ -134,9 +138,6 @@ int readfile(const char *readfile, char *readdata, int leng)
     return 0;
 }
 
-bool caught_sigint = false;
-bool caught_sigterm = false;
-
 static void signal_handler(int signal_number)
 {
     if(signal_number == SIGINT) {
@@ -147,6 +148,9 @@ static void signal_handler(int signal_number)
 
     syslog(LOG_DEBUG, "Caught siganl, exiting\n");
 
+    if(readbuffer != NULL) {
+	    free(readbuffer);
+    } 	    
     remove(TMP_FILE);
 
     closelog();
@@ -183,7 +187,6 @@ int main(int argc, char **argv)
     int addrlen = sizeof(address);
     int opt = 1;
     char buffer[WBUF_SIZE] = {0};
-    char *readbuffer;
     int daemon = 0;
     pid_t pid;
 
@@ -279,6 +282,7 @@ int main(int argc, char **argv)
 
         leng = send(new_sockfd, readbuffer, leng, 0);
         free(readbuffer); 
+	readbuffer = NULL;
     } while(caught_sigint == false && caught_sigterm == false);
 
     
