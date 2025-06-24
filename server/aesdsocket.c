@@ -11,6 +11,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <signal.h>
+#include <stdbool.h>
 
 #define TMP_FILE "/var/tmp/aesdsocketdata"
 #define WBUF_SIZE 1024
@@ -132,6 +134,45 @@ int readfile(const char *readfile, char *readdata, int leng)
     return 0;
 }
 
+bool caught_sigint = false;
+bool caught_sigterm = false;
+
+static void signal_handler(int signal_number)
+{
+    if(signal_number == SIGINT) {
+        caught_sigint = true;
+    } else if(signal_number == SIGTERM) {
+        caught_sigterm = true;
+    }
+
+    syslog(LOG_DEBUG, "Caught siganl, exiting\n");
+
+    remove(TMP_FILE);
+
+    closelog();
+}
+
+bool init_signal(void)
+{
+    struct sigaction new_action;
+    bool success = true;
+    
+    memset(&new_action, 0, sizeof(struct sigaction));
+    new_action.sa_handler = signal_handler;
+
+    if(sigaction(SIGTERM, &new_action, NULL) != 0) {
+        printf("Error %d (%s) registering for SIGTERM", errno, strerror(errno));
+        success = false;
+    }
+
+    if(sigaction(SIGINT, &new_action, NULL) != 0) {
+        printf("Error %d (%s) registering for SIGINT", errno, strerror(errno));
+        success = false;
+    }
+
+    return success;
+}
+
 int main(int argc, char **argv)
 {
     int sockfd, new_sockfd;
@@ -159,7 +200,11 @@ int main(int argc, char **argv)
     } else {
         printf("Welcome to Socket Testing Program.\n");
     }
-    
+ 
+    if(!init_signal()) {
+            return -1;
+    }
+
     sockfd = socket(domain, type, protocol);
     if(sockfd < 0) {
         perror("socket creation failed");
@@ -182,6 +227,7 @@ int main(int argc, char **argv)
     }
 
     if(daemon) {
+
         pid = fork();
         if(pid < 0) { 
             syslog(LOG_ERR, "Error fork()\n");
@@ -199,7 +245,7 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    while(1) {
+    do {
         int leng;
 
         if((new_sockfd = accept(sockfd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
@@ -233,9 +279,8 @@ int main(int argc, char **argv)
 
         leng = send(new_sockfd, readbuffer, leng, 0);
         free(readbuffer); 
-    }
- 
-	closelog();
+    } while(caught_sigint == false && caught_sigterm == false);
+
     
 	return 0;
 }
