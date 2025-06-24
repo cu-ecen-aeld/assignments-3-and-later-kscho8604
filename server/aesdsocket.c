@@ -93,7 +93,7 @@ int write_file(const char *writefile, const char *writestr, int leng)
                 ret = 1;
                 goto exit;
         } else {
-                syslog(LOG_DEBUG, "Writing %s to %s\n", writestr, writefile);
+                //syslog(LOG_DEBUG, "Writing %s to %s\n", writestr, writefile);
                 fwrite((const void*)writestr, sizeof(char), leng, fp);
                 fclose(fp);
         }
