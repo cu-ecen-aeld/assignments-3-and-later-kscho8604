@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 
 #define TMP_FILE "/var/tmp/aesdsocketdata"
 #define WBUF_SIZE 1024
@@ -142,9 +143,23 @@ int main(int argc, char **argv)
     int opt = 1;
     char buffer[WBUF_SIZE] = {0};
     char *readbuffer;
+    int daemon = 0;
+    pid_t pid;
 
 	openlog(NULL, 0, LOG_USER);
 
+    if(argc==2) {
+        if(!strcmp(argv[1], "-d")) {
+            daemon = 1;  
+        }
+    }
+
+    if(daemon) {
+        printf("Welcome to Socket Testing Daemon Program.\n");
+    } else {
+        printf("Welcome to Socket Testing Program.\n");
+    }
+    
     sockfd = socket(domain, type, protocol);
     if(sockfd < 0) {
         perror("socket creation failed");
@@ -164,6 +179,19 @@ int main(int argc, char **argv)
     if(bind(sockfd, (struct sockaddr *)&address, sizeof(address)) < 0) {
         perror("bind faild");
         return -1;
+    }
+
+    if(daemon) {
+        pid = fork();
+        if(pid < 0) { 
+            syslog(LOG_ERR, "Error fork()\n");
+            return -1;
+        } else if(pid == 0) { // child
+            syslog(LOG_DEBUG, "run child\n");
+        } else {
+            syslog(LOG_DEBUG, "exit parent\n");
+            exit(0);
+        }
     }
 
     if(listen(sockfd, 3) < 0) {
