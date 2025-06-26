@@ -197,7 +197,6 @@ int main(int argc, char **argv)
         switch(opt) {
             case 'd':
                 daemon = 1;
-                printf("getopt -d\n");
                 break;
             default:
                 printf("USAGE: %s [options] \n", argv[0]);
