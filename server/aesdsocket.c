@@ -192,11 +192,21 @@ int main(int argc, char **argv)
 
 	openlog(NULL, 0, LOG_USER);
 
-    if(argc==2) {
-        if(!strcmp(argv[1], "-d")) {
-            daemon = 1;  
-        }
-    }
+    while((opt = getopt(argc, argv, "d")) != -1)
+    {
+        switch(opt) {
+            case 'd':
+                daemon = 1;
+                printf("getopt -d\n");
+                break;
+            default:
+                printf("USAGE: %s [options] \n", argv[0]);
+                printf(" options:\n");
+                printf("  -d, daemon mode\n");
+                return 0;
+                break;
+       } 
+    }   
 
     if(daemon) {
         printf("Welcome to Socket Testing Daemon Program.\n");
