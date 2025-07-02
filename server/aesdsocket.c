@@ -21,6 +21,7 @@
 char *readbuffer = NULL;
 bool caught_sigint = false;
 bool caught_sigterm = false;
+int sockfd, new_sockfd;
 
 int mkdir_recursive(const char *path, mode_t mode)
 {
@@ -151,8 +152,17 @@ static void signal_handler(int signal_number)
     if(readbuffer != NULL) {
 	    free(readbuffer);
     } 	    
+    syslog(LOG_DEBUG, "remove %s\n", TMP_FILE);
     remove(TMP_FILE);
 
+    if(new_sockfd) {
+        syslog(LOG_DEBUG, "close new_sockfd[%d]\n", new_sockfd);
+        close(new_sockfd);
+    }
+    if(sockfd) {
+        syslog(LOG_DEBUG, "close sockfd[%d]\n", sockfd);
+        close(sockfd);
+    }
     closelog();
 }
 
@@ -179,7 +189,6 @@ bool init_signal(void)
 
 int main(int argc, char **argv)
 {
-    int sockfd, new_sockfd;
     int domain = PF_INET;
     int type = SOCK_STREAM;
     int protocol = 0;
@@ -294,6 +303,6 @@ int main(int argc, char **argv)
 	readbuffer = NULL;
     } while(caught_sigint == false && caught_sigterm == false);
 
-    
+
 	return 0;
 }
