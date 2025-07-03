@@ -16,13 +16,13 @@
 #include <pthread.h>
 
 #define TMP_FILE "/var/tmp/aesdsocketdata"
-#define WBUF_SIZE 1024
+#define BUF_SIZE 1024
 #define PORT 9000
 
 char *readbuffer = NULL;
 bool caught_sigint = false;
 bool caught_sigterm = false;
-int sockfd, new_sockfd;
+int sockfd;
 
 int mkdir_recursive(const char *path, mode_t mode)
 {
@@ -156,10 +156,6 @@ static void signal_handler(int signal_number)
     syslog(LOG_DEBUG, "remove %s\n", TMP_FILE);
     remove(TMP_FILE);
 
-    if(new_sockfd) {
-        syslog(LOG_DEBUG, "close new_sockfd[%d]\n", new_sockfd);
-        close(new_sockfd);
-    }
     if(sockfd) {
         syslog(LOG_DEBUG, "close sockfd[%d]\n", sockfd);
         close(sockfd);
@@ -191,20 +187,74 @@ bool init_signal(void)
 struct thread_data{
     pthread_mutex_t *mutex;
     bool thread_complete_success;
+    int socket;
 };
 
 void *threadfunc(void *thread_param)
 {
     struct thread_data *thread_func_args = (struct thread_data*) thread_param;
     pthread_mutex_t *mutex = thread_func_args->mutex;
+    int new_sockfd = thread_func_args->socket;
+    char buffer[BUF_SIZE] = {0};
+    int leng;
 
-    pthread_mutex_lock(mutex);
-    thread_func_args->thread_complete_success = true;
-    pthread_mutex_unlock(mutex);
+    do {
+        leng = recv(new_sockfd, buffer, BUF_SIZE, 0);
+
+        pthread_mutex_lock(mutex);
+        if(write_file(TMP_FILE, buffer, leng)) {
+            syslog(LOG_ERR,"write file");
+            return thread_param;
+        }
+        pthread_mutex_unlock(mutex);
+    } while (leng == BUF_SIZE);
+
+    leng = fileLength(TMP_FILE);
+
+    readbuffer = (char*)malloc(leng);  
+    if(readbuffer == NULL) {
+        syslog(LOG_ERR, "malloc readbuffer");
+        return thread_param;
+    }
+
+    if(readfile(TMP_FILE, readbuffer, leng)) {
+        syslog(LOG_ERR, "read file");
+        return thread_param;
+    }
+
+    leng = send(new_sockfd, readbuffer, leng, 0);
+    free(readbuffer); 
+    readbuffer = NULL;
+    
+    close(new_sockfd);
 
     return thread_param;
 }
 
+bool create_thread(pthread_mutex_t *mutex, int socket)
+{
+    pthread_t thread;
+    struct thread_data *params;
+    int rc;
+
+    params = malloc(sizeof(struct thread_data));
+    if(params == NULL) {
+        syslog(LOG_ERR, "malloc error\n");
+        return false;
+    }
+
+    params->mutex = mutex;
+    params->thread_complete_success = false;
+    params->socket = socket;
+ 
+    rc = pthread_create(&thread, NULL, threadfunc, params);
+    if(rc != 0) {
+        syslog(LOG_ERR, "pthread create error rc %d\n", rc);
+        return false;
+    }
+
+    return true;    
+}
 
 int main(int argc, char **argv)
 {
@@ -214,9 +264,11 @@ int main(int argc, char **argv)
     struct sockaddr_in address;
     int addrlen = sizeof(address);
     int opt = 1;
-    char buffer[WBUF_SIZE] = {0};
     int daemon = 0;
     pid_t pid;
+    pthread_mutex_t mutex;
+
+    pthread_mutex_init(&mutex, NULL);
 
 	openlog(NULL, 0, LOG_USER);
 
@@ -286,7 +338,7 @@ int main(int argc, char **argv)
     }
 
     do {
-        int leng;
+        int new_sockfd;
 
         if((new_sockfd = accept(sockfd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
             perror("accept");
@@ -295,31 +347,11 @@ int main(int argc, char **argv)
 
         printf("Accepted connection from %s\n", inet_ntoa(address.sin_addr));
 
-        do {
-            leng = recv(new_sockfd, buffer, WBUF_SIZE, 0);
-
-            if(write_file(TMP_FILE, buffer, leng)) {
-                perror("write file");
-                return -1;
-            }
-        } while (leng == WBUF_SIZE);
-
-        leng = fileLength(TMP_FILE);
-
-        readbuffer = (char*)malloc(leng);  
-        if(readbuffer == NULL) {
-            perror("malloc readbuffer");
+        if(!create_thread(&mutex, new_sockfd)) {
+            syslog(LOG_ERR, "create_thread error\n");
             return -1;
-        }
+        }    
 
-        if(readfile(TMP_FILE, readbuffer, leng)) {
-            perror("read file");
-            return -1;
-        }
-
-        leng = send(new_sockfd, readbuffer, leng, 0);
-        free(readbuffer); 
-	readbuffer = NULL;
     } while(caught_sigint == false && caught_sigterm == false);
 
 
