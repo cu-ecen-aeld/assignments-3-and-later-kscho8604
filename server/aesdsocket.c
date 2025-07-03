@@ -19,10 +19,20 @@
 #define BUF_SIZE 1024
 #define PORT 9000
 
-char *readbuffer = NULL;
 bool caught_sigint = false;
 bool caught_sigterm = false;
 int sockfd;
+
+struct thread_data{
+    pthread_t thread;
+    pthread_mutex_t *mutex;
+    bool thread_complete_success;
+    int socket;
+    struct thread_data *next;
+};
+
+struct thread_data *head = NULL;
+pthred_t time_thread;
 
 int mkdir_recursive(const char *path, mode_t mode)
 {
@@ -150,9 +160,6 @@ static void signal_handler(int signal_number)
 
     syslog(LOG_DEBUG, "Caught siganl, exiting\n");
 
-    if(readbuffer != NULL) {
-	    free(readbuffer);
-    } 	    
     syslog(LOG_DEBUG, "remove %s\n", TMP_FILE);
     remove(TMP_FILE);
 
@@ -160,7 +167,22 @@ static void signal_handler(int signal_number)
         syslog(LOG_DEBUG, "close sockfd[%d]\n", sockfd);
         close(sockfd);
     }
+
+    while(head) {
+        struct thread_data *temp = head;
+        pthread_cancel(head->thread);
+        pthread_join(head->thread, NULL);
+        if(head->socket) {
+            syslog(LOG_DEBUG, "close socket %d\n", head->socket);
+            close(head->socket);
+        }
+        head = head->next;
+        free(temp);
+    }
+
     closelog();
+    
+    exit(0); 
 }
 
 bool init_signal(void)
@@ -184,11 +206,6 @@ bool init_signal(void)
     return success;
 }
 
-struct thread_data{
-    pthread_mutex_t *mutex;
-    bool thread_complete_success;
-    int socket;
-};
 
 void *threadfunc(void *thread_param)
 {
@@ -197,7 +214,8 @@ void *threadfunc(void *thread_param)
     int new_sockfd = thread_func_args->socket;
     char buffer[BUF_SIZE] = {0};
     int leng;
-
+    char *readbuffer = NULL;
+    
     do {
         leng = recv(new_sockfd, buffer, BUF_SIZE, 0);
 
@@ -228,12 +246,13 @@ void *threadfunc(void *thread_param)
     
     close(new_sockfd);
 
+    pthread_exit(NULL);
+
     return thread_param;
 }
 
 bool create_thread(pthread_mutex_t *mutex, int socket)
 {
-    pthread_t thread;
     struct thread_data *params;
     int rc;
 
@@ -246,14 +265,24 @@ bool create_thread(pthread_mutex_t *mutex, int socket)
     params->mutex = mutex;
     params->thread_complete_success = false;
     params->socket = socket;
+
+    params->next = head;
+    head = params;    
  
-    rc = pthread_create(&thread, NULL, threadfunc, params);
+    rc = pthread_create(&params->thread, NULL, threadfunc, params);
     if(rc != 0) {
         syslog(LOG_ERR, "pthread create error rc %d\n", rc);
         return false;
     }
 
     return true;    
+}
+
+void *time_thread_func(void *arg)
+{
+    while(1) {
+         
+    } 
 }
 
 int main(int argc, char **argv)
@@ -266,6 +295,7 @@ int main(int argc, char **argv)
     int opt = 1;
     int daemon = 0;
     pid_t pid;
+
     pthread_mutex_t mutex;
 
     pthread_mutex_init(&mutex, NULL);
@@ -337,6 +367,8 @@ int main(int argc, char **argv)
         return -1;
     }
 
+    pthread_create(&time_thread, NULL, time_thred_function, NULL);
+ 
     do {
         int new_sockfd;
 
