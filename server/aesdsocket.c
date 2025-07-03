@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <pthread.h>
 
 #define TMP_FILE "/var/tmp/aesdsocketdata"
 #define WBUF_SIZE 1024
@@ -186,6 +187,24 @@ bool init_signal(void)
 
     return success;
 }
+
+struct thread_data{
+    pthread_mutex_t *mutex;
+    bool thread_complete_success;
+};
+
+void *threadfunc(void *thread_param)
+{
+    struct thread_data *thread_func_args = (struct thread_data*) thread_param;
+    pthread_mutex_t *mutex = thread_func_args->mutex;
+
+    pthread_mutex_lock(mutex);
+    thread_func_args->thread_complete_success = true;
+    pthread_mutex_unlock(mutex);
+
+    return thread_param;
+}
+
 
 int main(int argc, char **argv)
 {
