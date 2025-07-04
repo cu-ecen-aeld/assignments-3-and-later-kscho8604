@@ -152,6 +152,7 @@ int readfile(const char *readfile, char *readdata, int leng)
 
 static void signal_handler(int signal_number)
 {
+    pthread_mutex_t *mutex = head->mutex;
     if(signal_number == SIGINT) {
         caught_sigint = true;
     } else if(signal_number == SIGTERM) {
@@ -160,7 +161,7 @@ static void signal_handler(int signal_number)
 
     syslog(LOG_DEBUG, "Caught siganl, exiting\n");
 
-    syslog(LOG_DEBUG, "remove %s\n", TMP_FILE);
+    pthread_mutex_destroy(mutex);
     remove(TMP_FILE);
 
     if(sockfd) {
@@ -179,6 +180,9 @@ static void signal_handler(int signal_number)
         head = head->next;
         free(temp);
     }
+
+    pthread_cancel(time_thread);
+    pthread_join(time_thread, NULL);
 
     closelog();
     
@@ -280,13 +284,18 @@ bool create_thread(pthread_mutex_t *mutex, int socket)
 
 void *time_thread_func(void *arg)
 {
+    pthread_mutex_t *mutex = (pthread_mutex_t*)arg;
+    
     while(1) {
         time_t now = time(NULL);
         struct tm *tm_info = localtime(&now);
         char time[200];
         int leng = strftime(time, sizeof(time), "timestamp: %a, %d %b %Y %H:%M:%S %z\n", tm_info);
-       
+    
+        pthread_mutex_lock(mutex);   
         write_file(TMP_FILE, time, leng);
+        pthread_mutex_unlock(mutex);
+
         sleep(10);
     }
     pthread_exit(NULL);
@@ -374,7 +383,7 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    pthread_create(&time_thread, NULL, time_thread_func, NULL);
+    pthread_create(&time_thread, NULL, time_thread_func, (void*)&mutex);
  
     do {
         int new_sockfd;
