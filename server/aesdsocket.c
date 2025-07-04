@@ -32,7 +32,7 @@ struct thread_data{
 };
 
 struct thread_data *head = NULL;
-pthred_t time_thread;
+pthread_t time_thread;
 
 int mkdir_recursive(const char *path, mode_t mode)
 {
@@ -281,8 +281,15 @@ bool create_thread(pthread_mutex_t *mutex, int socket)
 void *time_thread_func(void *arg)
 {
     while(1) {
-         
-    } 
+        time_t now = time(NULL);
+        struct tm *tm_info = localtime(&now);
+        char time[200];
+        int leng = strftime(time, sizeof(time), "timestamp: %a, %d %b %Y %H:%M:%S %z\n", tm_info);
+       
+        write_file(TMP_FILE, time, leng);
+        sleep(10);
+    }
+    pthread_exit(NULL);
 }
 
 int main(int argc, char **argv)
@@ -367,7 +374,7 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    pthread_create(&time_thread, NULL, time_thred_function, NULL);
+    pthread_create(&time_thread, NULL, time_thread_func, NULL);
  
     do {
         int new_sockfd;
