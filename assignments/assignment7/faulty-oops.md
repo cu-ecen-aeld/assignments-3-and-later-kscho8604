@@ -1,5 +1,6 @@
 # Assignment 7 Fault Log
 
+ 
 ```
 # echo "hello_world" > /dev/faulty
 Unable to handle kernel NULL pointer dereference at virtual address 0000000000000000
