@@ -1,5 +1,7 @@
 # Assignment 7 Fault Log
 
+The kernel oops at faulty_write function due to null pointer dereference at virtual address 0x0.
+
  
 ```
 # echo "hello_world" > /dev/faulty
