@@ -29,6 +29,9 @@ struct aesd_dev
      * TODO: Add structure(s) and locks needed to complete assignment requirements
      */
     struct cdev cdev;     /* Char device structure      */
+    struct aesd_circular_buffer circular_buff;
+    struct aesd_buffer_entry working_entry;
+    struct mutex lock;
 };
 
 
