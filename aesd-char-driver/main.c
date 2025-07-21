@@ -16,6 +16,8 @@
 #include <linux/printk.h>
 #include <linux/types.h>
 #include <linux/cdev.h>
+#include <linux/fs.h>
+#include <linux/slab.h>
 #include <linux/fs.h> // file_operations
 #include "aesdchar.h"
 int aesd_major =   0; // use dynamic major
@@ -60,7 +62,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
      */
 
     if(mutex_lock_interruptible(&dev->lock)) {
-        retrun -ERESTARTSYS;
+        return -ERESTARTSYS;
     }
 
     entry = aesd_circular_buffer_find_entry_offset_for_fpos(&dev->circular_buf, *f_pos, &entry_offset);
@@ -97,21 +99,21 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
      * TODO: handle write
      */
     struct aesd_dev *dev = filp->private_data;
-    char *kbuff = (char*)malloc(count, GFP_KERNEL);
+    char *kbuff = (char*)kmalloc(count, GFP_KERNEL);
     if(kbuff == NULL) {
         goto out;
     }
 
     if(copy_from_user(kbuff, buf, count)) {
-        retval = -EFALUT;
+        retval = -EFAULT;
         goto out;
     }
 
     /* serach new line */
-    char *pos = memchar(kbuff, '\n', count);
+    char *pos = memchr(kbuff, '\n', count);
     size_t num_copy = count;
     if(pos != NULL) {
-        num_copy = ps - kbuff + 1;
+        num_copy = pos - kbuff + 1;
     }
 
     if(mutex_lock_interruptible(&dev->lock)) {
@@ -129,8 +131,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     }
 
     dev->working_entry.buffptr = tmp;
-    memcpy(dev->woring_entry.buffptr + dev->working_entry.size, kbuff, num_copy);
-    dev->working_entrt.size += num_copy;
+    memcpy(dev->working_entry.buffptr + dev->working_entry.size, kbuff, num_copy);
+    dev->working_entry.size += num_copy;
     retval = num_copy;
 
     /* process newline */
@@ -140,7 +142,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
             kfree(temp_ptr);
         }
         
-        dev->working_entry.buffer = NULL;
+        dev->working_entry.buffptr = NULL;
         dev->working_entry.size = 0;
     }
 
