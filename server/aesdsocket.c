@@ -14,8 +14,15 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include <fcntl.h>
 
+#define USE_AESD_CHAR_DEVICE 1
+#if USE_AESD_CHAR_DEVICE
+#define TMP_FILE "/dev/aesdchar"
+#else
 #define TMP_FILE "/var/tmp/aesdsocketdata"
+#endif
+
 #define BUF_SIZE 1024
 #define PORT 9000
 
@@ -32,7 +39,10 @@ struct thread_data{
 };
 
 struct thread_data *head = NULL;
+
+#if !USE_AESD_CHAR_DEVICE
 pthread_t time_thread;
+#endif
 
 int mkdir_recursive(const char *path, mode_t mode)
 {
@@ -117,7 +127,7 @@ exit:
 
 int fileLength(const char *readfile)
 {
-    FILE* fp;
+    FILE *fp;
     
     if ((fp = fopen(readfile, "r")) == NULL)
     {
@@ -162,7 +172,10 @@ static void signal_handler(int signal_number)
     syslog(LOG_DEBUG, "Caught siganl, exiting\n");
 
     pthread_mutex_destroy(mutex);
+    
+#if !USE_AESD_CHAR_DEVICE
     remove(TMP_FILE);
+#endif
 
     if(sockfd) {
         syslog(LOG_DEBUG, "close sockfd[%d]\n", sockfd);
@@ -181,8 +194,10 @@ static void signal_handler(int signal_number)
         free(temp);
     }
 
+#if !USE_AESD_CHAR_DEVICE
     pthread_cancel(time_thread);
     pthread_join(time_thread, NULL);
+#endif
 
     closelog();
     
@@ -214,40 +229,57 @@ bool init_signal(void)
 void *threadfunc(void *thread_param)
 {
     struct thread_data *thread_func_args = (struct thread_data*) thread_param;
-    pthread_mutex_t *mutex = thread_func_args->mutex;
+    pthread_mutex_t *file_mutex = thread_func_args->mutex;
     int new_sockfd = thread_func_args->socket;
     char buffer[BUF_SIZE] = {0};
-    int leng;
-    char *readbuffer = NULL;
-    
-    do {
-        leng = recv(new_sockfd, buffer, BUF_SIZE, 0);
+    ssize_t bytes_received; 
 
-        pthread_mutex_lock(mutex);
-        if(write_file(TMP_FILE, buffer, leng)) {
-            syslog(LOG_ERR,"write file");
-            return thread_param;
+    //receive data
+    while (1) {
+        bytes_received = recv(new_sockfd, buffer, BUF_SIZE, 0);
+        if (bytes_received <= 0) {
+            if (bytes_received < 0) {
+                syslog(LOG_ERR, "Failed to receive data: %s", strerror(errno));
+            } else {
+                syslog(LOG_INFO, "Client disconnected");
+            }
+            break;
         }
-        pthread_mutex_unlock(mutex);
-    } while (leng == BUF_SIZE);
 
-    leng = fileLength(TMP_FILE);
+        pthread_mutex_lock(file_mutex);
 
-    readbuffer = (char*)malloc(leng);  
-    if(readbuffer == NULL) {
-        syslog(LOG_ERR, "malloc readbuffer");
-        return thread_param;
+        int file_fd = open(TMP_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (file_fd == -1) {
+            syslog(LOG_ERR, "Failed to open file for writing: %s", strerror(errno));
+            pthread_mutex_unlock(file_mutex);
+            break;
+        }
+        if (write(file_fd, buffer, bytes_received) == -1) {
+            syslog(LOG_ERR, "Failed to write to file: %s", strerror(errno));
+            close(file_fd);
+            pthread_mutex_unlock(file_mutex);
+            break;
+        }
+        close(file_fd);
+        pthread_mutex_unlock(file_mutex);
+
+        if (buffer[bytes_received - 1] == '\n') {
+            int file_fd_read = open(TMP_FILE, O_RDONLY);
+            if (file_fd_read == -1) {
+                syslog(LOG_ERR, "Failed to open file for reading: %s", strerror(errno));
+                break;
+            }
+            ssize_t read_bytes;
+            while ((read_bytes = read(file_fd_read, buffer, BUF_SIZE)) > 0) {
+                if (send(new_sockfd, buffer, read_bytes, 0) == -1) {
+                    perror("send");
+                    break;
+                }
+            }
+            close(file_fd_read);
+        }
     }
 
-    if(readfile(TMP_FILE, readbuffer, leng)) {
-        syslog(LOG_ERR, "read file");
-        return thread_param;
-    }
-
-    leng = send(new_sockfd, readbuffer, leng, 0);
-    free(readbuffer); 
-    readbuffer = NULL;
-    
     close(new_sockfd);
 
     pthread_exit(NULL);
@@ -282,6 +314,7 @@ bool create_thread(pthread_mutex_t *mutex, int socket)
     return true;    
 }
 
+#if !USE_AESD_CHAR_DEVICE
 void *time_thread_func(void *arg)
 {
     pthread_mutex_t *mutex = (pthread_mutex_t*)arg;
@@ -300,7 +333,7 @@ void *time_thread_func(void *arg)
     }
     pthread_exit(NULL);
 }
-
+#endif
 int main(int argc, char **argv)
 {
     int domain = PF_INET;
@@ -383,7 +416,9 @@ int main(int argc, char **argv)
         return -1;
     }
 
+#if !USE_AESD_CHAR_DEVICE
     pthread_create(&time_thread, NULL, time_thread_func, (void*)&mutex);
+#endif
  
     do {
         int new_sockfd;
