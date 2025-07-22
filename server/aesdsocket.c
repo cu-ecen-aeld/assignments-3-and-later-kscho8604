@@ -233,22 +233,18 @@ void *threadfunc(void *thread_param)
 {
     struct thread_data *thread_func_args = (struct thread_data*) thread_param;
     pthread_mutex_t *file_mutex = thread_func_args->mutex;
-    int new_sockfd = thread_func_args->socket;
+    int clientfd = thread_func_args->socket;
     char buffer[BUF_SIZE] = {0};
     ssize_t bytes_received; 
     size_t total_len = 0;
     char *packet = NULL;
 
-    //receive data
-    while (1) {
-        bytes_received = recv(new_sockfd, buffer, BUF_SIZE, 0);
+    while ((bytes_received = recv(clientfd, buffer, sizeof(buffer)-1, 0)) > 0) {
         buffer[bytes_received] = '\0';
         char *newline = strchr(buffer, '\n');
-        if(!newline) {
+        if (!newline) {
             packet = realloc(packet, total_len + bytes_received + 1);
-            if(!packet) {
-                break;
-            }
+            if (!packet) break;
             memcpy(packet + total_len, buffer, bytes_received);
             total_len += bytes_received;
             continue;
@@ -259,13 +255,14 @@ void *threadfunc(void *thread_param)
         if (!packet) break;
         memcpy(packet + total_len, buffer, chunk_len);
         total_len += chunk_len;
-        packet[total_len] = '\0'; 
+        packet[total_len] = '\0';
 
         pthread_mutex_lock(file_mutex);
 
-        int file_fd = open(TMP_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
-        if (file_fd == -1) {
-            syslog(LOG_ERR, "Failed to open file for writing: %s", strerror(errno));
+#if USE_AESD_CHAR_DEVICE
+        int fd = open(TMP_FILE, O_RDWR | O_CREAT, 0644);
+        if (fd < 0) {
+            syslog(LOG_ERR, "open(%s) failed: %s", TMP_FILE, strerror(errno));
             pthread_mutex_unlock(file_mutex);
             break;
         }
@@ -276,42 +273,68 @@ void *threadfunc(void *thread_param)
                        AESD_IOCTL_CMD "%u,%u",
                        &seekto.write_cmd,
                        &seekto.write_cmd_offset) == 2) {
-                if (ioctl(file_fd, AESDCHAR_IOCSEEKTO, &seekto) < 0) {
+                if (ioctl(fd, AESDCHAR_IOCSEEKTO, &seekto) < 0) {
                     syslog(LOG_ERR, "ioctl() failed: %s", strerror(errno));
                 }
             } else {
                 syslog(LOG_ERR, "Malformed IOCSEEKTO cmd: %.*s",
                        (int)total_len, packet);
-            }   
-        } else { 
-            if (write(file_fd, buffer, bytes_received) == -1) {
-                syslog(LOG_ERR, "Failed to write to file: %s", strerror(errno));
-                close(file_fd);
+            }
+        } else {
+            ssize_t wlen = write(fd, packet, total_len);
+            if (wlen < 0) {
+                syslog(LOG_ERR, "write(%s) failed: %s", TMP_FILE, strerror(errno));
+                close(fd);
                 pthread_mutex_unlock(file_mutex);
                 break;
             }
-            close(file_fd);
-            pthread_mutex_unlock(file_mutex);
         }
 
-        if (buffer[bytes_received - 1] == '\n') {
-            int file_fd_read = open(TMP_FILE, O_RDONLY);
-            if (file_fd_read == -1) {
-                syslog(LOG_ERR, "Failed to open file for reading: %s", strerror(errno));
-                break;
-            }
-            ssize_t read_bytes;
-            while ((read_bytes = read(file_fd_read, buffer, BUF_SIZE)) > 0) {
-                if (send(new_sockfd, buffer, read_bytes, 0) == -1) {
-                    perror("send");
-                    break;
+        {
+            ssize_t rd;
+            while ((rd = read(fd, buffer, sizeof(buffer))) > 0) {
+                ssize_t sent = 0;
+                while (sent < rd) {
+                    ssize_t s = send(clientfd, buffer + sent, rd - sent, 0);
+                    if (s < 0) {
+                        syslog(LOG_ERR, "send() failed: %s", strerror(errno));
+                        break;
+                    }
+                    sent += s;
                 }
             }
-            close(file_fd_read);
+            if (rd < 0) {
+                syslog(LOG_ERR, "read(%s) failed: %s", TMP_FILE, strerror(errno));
+            }
         }
+
+        close(fd);
+
+#else
+
+        int fd = open(STORAGE_PATH, O_RDWR | O_CREAT | O_APPEND, 0644);
+        if (fd < 0) {
+            syslog(LOG_ERR, "open(%s) failed: %s", STORAGE_PATH, strerror(errno));
+            pthread_mutex_unlock(file_mutex);
+            break;
+        }
+        write(fd, packet, total_len);
+        lseek(fd, 0, SEEK_SET);
+        ssize_t rd;
+        while ((rd = read(fd, buffer, sizeof(buffer))) > 0) {
+            send(clientfd, buffer, rd, 0);
+        }
+        close(fd);
+#endif
+
+        pthread_mutex_unlock(file_mutex);
+        free(packet);
+        packet = NULL;
+        total_len = 0;
     }
 
-    close(new_sockfd);
+    free(packet);
+    close(clientfd);
 
     pthread_exit(NULL);
 
