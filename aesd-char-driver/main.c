@@ -153,12 +153,23 @@ out:
     mutex_unlock(&dev->lock);
     return retval;
 }
+
+loff_t llseek(struct file* file, loff_t offset, int whence)
+{
+	loff_t size = aesd_circular_buffer_get_size(&aesd_device.circular_buf);
+	loff_t ret = fixed_size_llseek(file, offset, whence, size); 
+	PDEBUG( "size %lld, ret %lld", size, ret);
+	
+    return ret;
+}
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
     .write =    aesd_write,
     .open =     aesd_open,
     .release =  aesd_release,
+    .llseek = llseek,
 };
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
