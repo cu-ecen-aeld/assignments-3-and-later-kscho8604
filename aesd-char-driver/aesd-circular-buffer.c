@@ -86,15 +86,15 @@ void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer)
 
 size_t aesd_circular_buffer_get_size(struct aesd_circular_buffer *buffer)
 {
-	size_t size = 0;
-	unsigned int pos = buffer->out_offs;
-	do
-	{
-		size += buffer->entry[pos].size;
-		pos = (pos + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
-	}
-	while( pos != buffer->out_offs );
+    size_t total_size = 0;
+    uint8_t i;
+    struct aesd_buffer_entry *entry;
+ 
+   AESD_CIRCULAR_BUFFER_FOREACH(entry, buffer, i) {
+    	total_size += entry->size;
+    }
 
-	return size;
+    return total_size;
+
 }
 

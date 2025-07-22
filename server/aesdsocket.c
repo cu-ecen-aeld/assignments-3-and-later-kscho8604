@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <fcntl.h>
+#include "../aesd-char-driver/aesd_ioctl.h"
 
 #define USE_AESD_CHAR_DEVICE 1
 #if USE_AESD_CHAR_DEVICE
@@ -25,6 +26,8 @@
 
 #define BUF_SIZE 1024
 #define PORT 9000
+
+#define AESD_IOCTL_CMD  "AESDCHAR_IOCSEEKTO:"
 
 bool caught_sigint = false;
 bool caught_sigterm = false;
@@ -233,18 +236,30 @@ void *threadfunc(void *thread_param)
     int new_sockfd = thread_func_args->socket;
     char buffer[BUF_SIZE] = {0};
     ssize_t bytes_received; 
+    size_t total_len = 0;
+    char *packet = NULL;
 
     //receive data
     while (1) {
         bytes_received = recv(new_sockfd, buffer, BUF_SIZE, 0);
-        if (bytes_received <= 0) {
-            if (bytes_received < 0) {
-                syslog(LOG_ERR, "Failed to receive data: %s", strerror(errno));
-            } else {
-                syslog(LOG_INFO, "Client disconnected");
+        buffer[bytes_received] = '\0';
+        char *newline = strchr(buffer, '\n');
+        if(!newline) {
+            packet = realloc(packet, total_len + bytes_received + 1);
+            if(!packet) {
+                break;
             }
-            break;
+            memcpy(packet + total_len, buffer, bytes_received);
+            total_len += bytes_received;
+            continue;
         }
+
+        size_t chunk_len = newline - buffer + 1;
+        packet = realloc(packet, total_len + chunk_len + 1);
+        if (!packet) break;
+        memcpy(packet + total_len, buffer, chunk_len);
+        total_len += chunk_len;
+        packet[total_len] = '\0'; 
 
         pthread_mutex_lock(file_mutex);
 
@@ -254,14 +269,30 @@ void *threadfunc(void *thread_param)
             pthread_mutex_unlock(file_mutex);
             break;
         }
-        if (write(file_fd, buffer, bytes_received) == -1) {
-            syslog(LOG_ERR, "Failed to write to file: %s", strerror(errno));
+
+        if (strncmp(packet, AESD_IOCTL_CMD, strlen(AESD_IOCTL_CMD)) == 0) {
+            struct aesd_seekto seekto;
+            if (sscanf(packet,
+                       AESD_IOCTL_CMD "%u,%u",
+                       &seekto.write_cmd,
+                       &seekto.write_cmd_offset) == 2) {
+                if (ioctl(file_fd, AESDCHAR_IOCSEEKTO, &seekto) < 0) {
+                    syslog(LOG_ERR, "ioctl() failed: %s", strerror(errno));
+                }
+            } else {
+                syslog(LOG_ERR, "Malformed IOCSEEKTO cmd: %.*s",
+                       (int)total_len, packet);
+            }   
+        } else { 
+            if (write(file_fd, buffer, bytes_received) == -1) {
+                syslog(LOG_ERR, "Failed to write to file: %s", strerror(errno));
+                close(file_fd);
+                pthread_mutex_unlock(file_mutex);
+                break;
+            }
             close(file_fd);
             pthread_mutex_unlock(file_mutex);
-            break;
         }
-        close(file_fd);
-        pthread_mutex_unlock(file_mutex);
 
         if (buffer[bytes_received - 1] == '\n') {
             int file_fd_read = open(TMP_FILE, O_RDONLY);

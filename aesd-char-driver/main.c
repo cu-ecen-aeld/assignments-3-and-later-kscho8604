@@ -20,6 +20,8 @@
 #include <linux/slab.h>
 #include <linux/fs.h> // file_operations
 #include "aesdchar.h"
+#include "aesd_ioctl.h"
+
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
@@ -154,13 +156,78 @@ out:
     return retval;
 }
 
-loff_t llseek(struct file* file, loff_t offset, int whence)
+loff_t llseek(struct file *filp, loff_t offset, int whence)
 {
+
+    struct aesd_dev *dev = (struct aesd_dev*)filp->private_data;
+
+    if (mutex_lock_interruptible(&dev->lock)) {
+        PDEBUG("aesd_llseek: mutex lock failed");
+        return -ERESTARTSYS;
+    }
+
 	loff_t size = aesd_circular_buffer_get_size(&aesd_device.circular_buf);
-	loff_t ret = fixed_size_llseek(file, offset, whence, size); 
+	loff_t ret = fixed_size_llseek(filp, offset, whence, size); 
 	PDEBUG( "size %lld, ret %lld", size, ret);
+
+    mutex_unlock(&dev->lock);
 	
     return ret;
+}
+
+static long aesd_adjust_file_offset(struct file* filp, unsigned int write_cmd, unsigned int write_cmd_offset) {
+    long retval = 0;
+    struct aesd_dev *dev = (struct aesd_dev *)filp->private_data;
+
+    if (mutex_lock_interruptible(&dev->lock)) {
+        PDEBUG("aesd_adjust_file_offset: mutex lock failed");
+        return -ERESTARTSYS;
+    }
+
+	if (write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
+		PDEBUG("aesd_adjust_file_offset: invalid write_cmd : %zu", write_cmd);
+		retval = -EINVAL;
+		goto aesd_adjust_unlock;
+	}
+
+	if (write_cmd_offset >= dev->circular_buf.entry[write_cmd].size) {
+		PDEBUG("aesd_adjust_file_offset: invalid write_cmd_offset : %zu", write_cmd_offset);
+		retval = -EINVAL;
+		goto aesd_adjust_unlock;	
+	}
+
+	loff_t start_offset = 0;
+	for (int i = 0; i < write_cmd; i++) {
+		start_offset += dev->circular_buf.entry[i].size;
+	}
+		
+	filp->f_pos = start_offset + write_cmd_offset;
+
+aesd_adjust_unlock:
+	mutex_unlock(&dev->lock);
+    
+	return retval;
+}
+
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) 
+{
+	long retval = 0;
+	
+	PDEBUG("aesd_ioctl: cmd %zu, arg %zu", cmd, arg);
+	switch (cmd) {
+	case AESDCHAR_IOCSEEKTO:
+	{
+		struct aesd_seekto seekto;
+		if (copy_from_user(&seekto, (struct aesd_seekto *)arg, sizeof(seekto))) {
+			return EFAULT;
+		}
+		
+		retval = aesd_adjust_file_offset(filp, seekto.write_cmd, seekto.write_cmd_offset);
+		PDEBUG("aesd_ioctl: aesd_adjust_file_offset() return %d", retval);
+	}
+	default:
+		return -EFAULT;
+	}
 }
 
 struct file_operations aesd_fops = {
@@ -170,6 +237,7 @@ struct file_operations aesd_fops = {
     .open =     aesd_open,
     .release =  aesd_release,
     .llseek = llseek,
+    .unlocked_ioctl = aesd_ioctl,
 };
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
